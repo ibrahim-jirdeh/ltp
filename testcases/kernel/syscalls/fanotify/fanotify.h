@@ -314,6 +314,23 @@ static inline int fanotify_handle_supported_by_kernel(int flag)
 		fanotify_flags_supported_on_fs(init_flags, mark_type, mask, fname)); \
 } while (0)
 
+static inline void require_fanotify_pre_content_fid_supported_on_fs(const char *fname)
+{
+	int fail;
+
+	require_fanotify_access_permissions_supported_on_fs(fname);
+	REQUIRE_FANOTIFY_EVENTS_SUPPORTED_ON_FS(FAN_CLASS_PRE_CONTENT, FAN_MARK_FILESYSTEM,
+						FAN_PRE_ACCESS, fname);
+	fail = fanotify_flags_supported_on_fs(FAN_CLASS_PRE_CONTENT_FID,
+					      FAN_MARK_FILESYSTEM,
+					      FAN_PRE_ACCESS, fname);
+
+	if (fail) {
+		tst_brk(TCONF | TERRNO,
+			"Pre-content events with fid info not supported in kernel?");
+	}
+}
+
 static inline struct fanotify_event_info_header *get_event_info(
 					struct fanotify_event_metadata *event,
 					int info_type)
