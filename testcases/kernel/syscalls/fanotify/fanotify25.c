@@ -48,6 +48,7 @@
 #define MNT2_PATH "mntpoint"
 #define FILE_EXEC_PATH MOUNT_PATH"/"TEST_APP
 
+static char notfound[BUF_SIZE];
 static char fname[BUF_SIZE];
 static char buf[BUF_SIZE];
 static volatile int fd_notify;
@@ -55,6 +56,8 @@ static size_t page_sz;
 
 static pid_t child_pid;
 static int bind_mount_fd;
+
+static int pre_dir_access_unsupported;
 
 static char event_buf[EVENT_BUF_LEN];
 
@@ -92,6 +95,19 @@ static struct tcase {
 		}
 	},
 	{
+		"mount mark, FAN_PRE_DIR_ACCESS | FAN_PRE_ACCESS events",
+		INIT_FANOTIFY_MARK_TYPE(MOUNT),
+		FAN_PRE_DIR_ACCESS | FAN_PRE_ACCESS,
+		{
+			{FAN_PRE_DIR_ACCESS, FAN_ALLOW},
+			{FAN_PRE_DIR_ACCESS, FAN_ALLOW},
+			{FAN_PRE_ACCESS, FAN_ALLOW},
+			{FAN_PRE_ACCESS, FAN_ALLOW},
+			{FAN_PRE_ACCESS, FAN_DENY},
+			{FAN_PRE_ACCESS, FAN_DENY_ERRNO(EIO)},
+		}
+	},
+	{
 		"filesystem mark, FAN_PRE_ACCESS events",
 		INIT_FANOTIFY_MARK_TYPE(FILESYSTEM),
 		FAN_PRE_ACCESS,
@@ -103,6 +119,19 @@ static struct tcase {
 		}
 	},
 	{
+		"filesystem mark, FAN_PRE_DIR_ACCESS | FAN_PRE_ACCESS events",
+		INIT_FANOTIFY_MARK_TYPE(FILESYSTEM),
+		FAN_PRE_DIR_ACCESS | FAN_PRE_ACCESS,
+		{
+			{FAN_PRE_DIR_ACCESS, FAN_ALLOW},
+			{FAN_PRE_DIR_ACCESS, FAN_ALLOW},
+			{FAN_PRE_ACCESS, FAN_ALLOW},
+			{FAN_PRE_ACCESS, FAN_ALLOW},
+			{FAN_PRE_ACCESS, FAN_DENY},
+			{FAN_PRE_ACCESS, FAN_DENY_ERRNO(EIO)},
+		}
+	},
+	{
 		"parent (implicitly) watching children, FAN_PRE_ACCESS events",
 		INIT_FANOTIFY_MARK_TYPE(PARENT),
 		FAN_PRE_ACCESS,
@@ -111,6 +140,28 @@ static struct tcase {
 			{FAN_PRE_ACCESS, FAN_DENY},
 			{FAN_PRE_ACCESS, FAN_DENY},
 			{FAN_PRE_ACCESS, FAN_DENY_ERRNO(EBUSY)},
+		}
+	},
+	{
+		"parent watching children and self, FAN_PRE_DIR_ACCESS | FAN_PRE_ACCESS events",
+		INIT_FANOTIFY_MARK_TYPE(PARENT),
+		FAN_PRE_DIR_ACCESS | FAN_PRE_ACCESS,
+		{
+			{FAN_PRE_DIR_ACCESS, FAN_ALLOW},
+			{FAN_PRE_DIR_ACCESS, FAN_ALLOW},
+			{FAN_PRE_ACCESS, FAN_ALLOW},
+			{FAN_PRE_ACCESS, FAN_ALLOW},
+			{FAN_PRE_ACCESS, FAN_DENY},
+			{FAN_PRE_ACCESS, FAN_DENY_ERRNO(EIO)},
+		}
+	},
+	{
+		"parent watching only itself, FAN_PRE_DIR_ACCESS events",
+		INIT_FANOTIFY_MARK_TYPE(PARENT),
+		FAN_PRE_DIR_ACCESS,
+		{
+			{FAN_PRE_DIR_ACCESS, FAN_ALLOW},
+			{FAN_PRE_DIR_ACCESS, FAN_ALLOW},
 		}
 	},
 	{
@@ -144,6 +195,29 @@ static void generate_events(struct tcase *tc)
 	char *const argv[] = {FILE_EXEC_PATH, NULL};
 	struct event *event = tc->event_set;
 	int exp_ret, exp_errno = 0;
+
+	if (tc->mask & FAN_PRE_DIR_ACCESS) {
+		DIR *dir;
+
+		/*
+		 * Lookup a unique name each test case to avoid negative cached
+		 * lookup result and generate FAN_PRE_DIR_ACCESS.
+		 */
+		event++;
+		sprintf(notfound, MOUNT_PATH"/notfound_%d", (int)(tc - tcases));
+		TST_EXP_FAIL(faccessat(AT_FDCWD, notfound, F_OK, 0),
+			     ENOENT, "faccessat(%s)", notfound);
+
+		/*
+		 * Generate FAN_PRE_DIR_ACCESS on readdir.
+		 * After this, no more FAN_PRE_DIR_ACCESS events are expected
+		 * on this dir until mount cycle.
+		 */
+		event++;
+		dir = SAFE_OPENDIR(MOUNT_PATH);
+		SAFE_READDIR(dir);
+		SAFE_CLOSEDIR(dir);
+	}
 
 	/*
 	 * Generate sequence of events
@@ -212,7 +286,7 @@ static void generate_events(struct tcase *tc)
 	 * Therefore, ETXTBSY is to be expected when file is not being watched
 	 * at all or being watched but not with pre-content events in mask.
 	 */
-	if (!exp_errno) {
+	if (!exp_errno && !(tc->mask & FAN_PRE_DIR_ACCESS)) {
 		fd = SAFE_OPEN(FILE_EXEC_PATH, O_RDWR);
 		if (!tc->event_set[0].mask)
 			exp_errno = ETXTBSY;
@@ -294,6 +368,13 @@ static int setup_mark(unsigned int n)
 
 	tst_res(TINFO, "Test #%d: %s", n, tc->tname);
 
+	if (tc->mask & FAN_PRE_DIR_ACCESS) {
+		if (pre_dir_access_unsupported) {
+			tst_res(TCONF, "pre-content events on dir not supported in kernel?");
+			return -1;
+		}
+	}
+
 	fd_notify = SAFE_FANOTIFY_INIT(FAN_CLASS_PRE_CONTENT_FID, O_RDONLY);
 
 	/* Ignore pre-content events on mnt2 so we can use it for open_by_handle_at() */
@@ -309,6 +390,9 @@ static int setup_mark(unsigned int n)
 	for (; i < ARRAY_SIZE(files); i++) {
 		SAFE_FANOTIFY_MARK(fd_notify, FAN_MARK_ADD | mark->flag,
 				  tc->mask, AT_FDCWD, files[i]);
+		/* No need to setup marks on each file when watching mount/sb */
+		if (mark->flag != FAN_MARK_INODE)
+			break;
 	}
 
 	return 0;
@@ -391,7 +475,8 @@ static void test_fanotify(unsigned int n)
 
 		event = (struct fanotify_event_metadata *)&event_buf[i];
 		event_fid = (struct fanotify_event_info_fid *)(event + 1);
-		if (event_fid->hdr.info_type == FAN_EVENT_INFO_TYPE_DFID_NAME) {
+		if (event_fid->hdr.info_type == FAN_EVENT_INFO_TYPE_DFID ||
+		    event_fid->hdr.info_type == FAN_EVENT_INFO_TYPE_DFID_NAME) {
 			file_handle = (struct file_handle *)event_fid->handle;
 			fhlen = file_handle->handle_bytes;
 			filename = (char *)file_handle->f_handle + fhlen;
@@ -475,8 +560,19 @@ static void test_fanotify(unsigned int n)
 		if (event->fd >= 0) {
 			char c;
 
-			/* Verify that read from event fd does not generate events */
-			SAFE_READ(0, event->fd, &c, 1);
+			if (event->mask & FAN_PRE_DIR_ACCESS) {
+				/*
+				 * Verify that lookup with a directory event fd does not
+				 * generate FAN_PRE_DIR_ACCESS events.
+				 */
+				sprintf(notfound, "nonotify_%d", (int)(tc - tcases));
+				TST_EXP_FAIL(faccessat(event->fd, notfound, F_OK, 0),
+					     ENOENT, "faccessat(%d, %s)",
+					     event->fd, notfound);
+			} else {
+				/* Verify that read from event fd does not generate events */
+				SAFE_READ(0, event->fd, &c, 1);
+			}
 			SAFE_CLOSE(event->fd);
 		}
 
@@ -506,6 +602,11 @@ static void setup(void)
 	SAFE_TRUNCATE(fname, page_sz*101);
 
 	require_fanotify_pre_content_fid_supported_on_fs(fname);
+	pre_dir_access_unsupported = fanotify_flags_supported_on_fs(
+						FAN_CLASS_PRE_CONTENT |
+						FAN_REPORT_DFID_NAME_TARGET,
+						FAN_MARK_INODE,
+						FAN_PRE_DIR_ACCESS, MOUNT_PATH);
 
 	SAFE_CP(TEST_APP, FILE_EXEC_PATH);
 

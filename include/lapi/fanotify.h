@@ -116,6 +116,9 @@
 #ifndef FAN_PRE_ACCESS
 #define FAN_PRE_ACCESS		0x00100000
 #endif
+#ifndef FAN_PRE_DIR_ACCESS
+#define FAN_PRE_DIR_ACCESS	0x00200000
+#endif
 #ifndef FAN_RENAME
 #define FAN_RENAME		0x10000000
 #endif
@@ -151,7 +154,7 @@
 #define LTP_ALL_PERM_EVENTS	(FAN_OPEN_PERM | FAN_OPEN_EXEC_PERM | \
 				 FAN_ACCESS_PERM)
 
-#define LTP_PRE_CONTENT_EVENTS	(FAN_PRE_ACCESS)
+#define LTP_PRE_CONTENT_EVENTS	(FAN_PRE_ACCESS | FAN_PRE_DIR_ACCESS)
 
 struct fanotify_group_type {
 	unsigned int flag;
