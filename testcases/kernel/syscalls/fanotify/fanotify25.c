@@ -25,6 +25,7 @@
 #include <errno.h>
 #include <string.h>
 #include <signal.h>
+#include <sys/mount.h>
 #include <sys/syscall.h>
 #include <stdlib.h>
 #include "tst_test.h"
@@ -44,6 +45,7 @@
 #define TST_TOTAL 3
 #define TEST_APP "fanotify_child"
 #define MOUNT_PATH "fs_mnt"
+#define MNT2_PATH "mntpoint"
 #define FILE_EXEC_PATH MOUNT_PATH"/"TEST_APP
 
 static char fname[BUF_SIZE];
@@ -52,6 +54,7 @@ static volatile int fd_notify;
 static size_t page_sz;
 
 static pid_t child_pid;
+static int bind_mount_fd;
 
 static char event_buf[EVENT_BUF_LEN];
 
@@ -293,6 +296,10 @@ static int setup_mark(unsigned int n)
 
 	fd_notify = SAFE_FANOTIFY_INIT(FAN_CLASS_PRE_CONTENT_FID, O_RDONLY);
 
+	/* Ignore pre-content events on mnt2 so we can use it for open_by_handle_at() */
+	SAFE_FANOTIFY_MARK(fd_notify, FAN_MARK_ADD | FAN_MARK_MOUNT | FAN_MARK_IGNORE_SURV,
+			   tc->mask, AT_FDCWD, MNT2_PATH);
+
 	if (mark->flag == FAN_MARK_PARENT) {
 		SAFE_FANOTIFY_MARK(fd_notify, FAN_MARK_ADD | mark->flag,
 				   tc->mask, AT_FDCWD, MOUNT_PATH);
@@ -327,8 +334,8 @@ static void test_fanotify(unsigned int n)
 	while (test_num < EVENT_SET_MAX && fd_notify != -1) {
 		struct fanotify_event_metadata *event;
 		struct fanotify_event_info_fid *event_fid;
-		struct fanotify_event_info_fid *child_fid;
-		struct file_handle *file_handle;
+		struct fanotify_event_info_fid *child_fid = NULL;
+		struct file_handle *file_handle = NULL;
 		const char *filename = NULL;
 		unsigned int fhlen = 0;
 		int namelen = 0;
@@ -427,7 +434,22 @@ static void test_fanotify(unsigned int n)
 
 		i += event->event_len;
 
-		if (event->fd != FAN_NOFD) {
+		if (child_fid)
+			file_handle = (struct file_handle *)child_fid->handle;
+
+		/* open fd by handle instead of using the event->fd */
+		if (file_handle) {
+			if (event->fd >= 0)
+				SAFE_CLOSE(event->fd);
+
+			/* Verify that fd opened from ignored bind mount does not generate events */
+			event->fd = open_by_handle_at(bind_mount_fd, file_handle, O_RDONLY);
+			if (event->fd < 0)
+				tst_res(TFAIL | TERRNO, "failed to open fd by handle");
+			else
+				tst_res(TINFO, "opened fd %d by handle", event->fd);
+		}
+		if (event->fd >= 0) {
 			char c;
 
 			/* Verify that read from event fd does not generate events */
@@ -461,12 +483,25 @@ static void setup(void)
 	require_fanotify_pre_content_fid_supported_on_fs(fname);
 
 	SAFE_CP(TEST_APP, FILE_EXEC_PATH);
+
+	/* Create another bind mount at another path for open_by_file_handle() */
+	SAFE_MKDIR(MNT2_PATH, 0755);
+	SAFE_MOUNT(MOUNT_PATH, MNT2_PATH, "none", MS_BIND, NULL);
+	bind_mount_fd = -1;
+	bind_mount_fd = SAFE_OPEN(MNT2_PATH, O_DIRECTORY);
 }
 
 static void cleanup(void)
 {
 	if (fd_notify > 0)
 		SAFE_CLOSE(fd_notify);
+
+	 if (bind_mount_fd) {
+		 if (bind_mount_fd > 0)
+			 SAFE_CLOSE(bind_mount_fd);
+		 SAFE_UMOUNT(MNT2_PATH);
+		 SAFE_RMDIR(MNT2_PATH);
+	 }
 }
 
 static const char *const resource_files[] = {
