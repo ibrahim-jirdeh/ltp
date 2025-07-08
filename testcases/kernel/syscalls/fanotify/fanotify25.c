@@ -314,6 +314,29 @@ static int setup_mark(unsigned int n)
 	return 0;
 }
 
+static void umount_bind_mount(void)
+{
+	if (bind_mount_fd) {
+		if (bind_mount_fd > 0)
+			SAFE_CLOSE(bind_mount_fd);
+		SAFE_UMOUNT(MNT2_PATH);
+		SAFE_RMDIR(MNT2_PATH);
+	}
+}
+
+/* Umount fs to evict the root dentry which caches the "HSM handled" dir status */
+static void mount_cycle(void)
+{
+	umount_bind_mount();
+	SAFE_UMOUNT(MOUNT_PATH);
+	SAFE_MOUNT(tst_device->dev, MOUNT_PATH, tst_device->fs_type, 0, NULL);
+	/* Create another bind mount at another path for open_by_file_handle() */
+	SAFE_MKDIR(MNT2_PATH, 0755);
+	SAFE_MOUNT(MOUNT_PATH, MNT2_PATH, "none", MS_BIND, NULL);
+	bind_mount_fd = -1;
+	bind_mount_fd = SAFE_OPEN(MNT2_PATH, O_DIRECTORY);
+}
+
 static void test_fanotify(unsigned int n)
 {
 	int ret, len = 0, i = 0, test_num = 0;
@@ -470,6 +493,8 @@ static void test_fanotify(unsigned int n)
 
 	if (fd_notify > 0)
 		SAFE_CLOSE(fd_notify);
+
+	mount_cycle();
 }
 
 static void setup(void)
@@ -484,11 +509,7 @@ static void setup(void)
 
 	SAFE_CP(TEST_APP, FILE_EXEC_PATH);
 
-	/* Create another bind mount at another path for open_by_file_handle() */
-	SAFE_MKDIR(MNT2_PATH, 0755);
-	SAFE_MOUNT(MOUNT_PATH, MNT2_PATH, "none", MS_BIND, NULL);
-	bind_mount_fd = -1;
-	bind_mount_fd = SAFE_OPEN(MNT2_PATH, O_DIRECTORY);
+	mount_cycle();
 }
 
 static void cleanup(void)
@@ -496,12 +517,7 @@ static void cleanup(void)
 	if (fd_notify > 0)
 		SAFE_CLOSE(fd_notify);
 
-	 if (bind_mount_fd) {
-		 if (bind_mount_fd > 0)
-			 SAFE_CLOSE(bind_mount_fd);
-		 SAFE_UMOUNT(MNT2_PATH);
-		 SAFE_RMDIR(MNT2_PATH);
-	 }
+	umount_bind_mount();
 }
 
 static const char *const resource_files[] = {
