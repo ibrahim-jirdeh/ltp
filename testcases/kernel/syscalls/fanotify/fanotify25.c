@@ -294,7 +294,9 @@ static int setup_mark(unsigned int n)
 
 	tst_res(TINFO, "Test #%d: %s", n, tc->tname);
 
-	fd_notify = SAFE_FANOTIFY_INIT(FAN_CLASS_PRE_CONTENT_FID, O_RDONLY);
+	unsigned int report_flags = tst_variant ? FAN_REPORT_RESPONSE_ID : 0;
+	fd_notify = SAFE_FANOTIFY_INIT(FAN_CLASS_PRE_CONTENT_FID | report_flags,
+									O_RDONLY);
 
 	/* Ignore pre-content events on mnt2 so we can use it for open_by_handle_at() */
 	SAFE_FANOTIFY_MARK(fd_notify, FAN_MARK_ADD | FAN_MARK_MOUNT | FAN_MARK_IGNORE_SURV,
@@ -423,13 +425,16 @@ static void test_fanotify(unsigned int n)
 		}
 
 		/* Write response to the permission event */
-		if (event->fd >= 0) {
+		if (!tst_variant && event->fd < 0) {
+			tst_res(TFAIL, "unexpected error event->fd=%d", event->fd);
+		} else if (tst_variant && event->fd >= -255) {
+			tst_res(TFAIL, "unexpected value of event->id=%d", event->fd);
+		} else {
 			struct fanotify_response resp;
-
 			resp.fd = event->fd;
 			resp.response = event_set[test_num].response;
 			SAFE_WRITE(SAFE_WRITE_ALL, fd_notify, &resp, sizeof(resp));
-			tst_res(TPASS, "response=%x fd=%d", resp.response, resp.fd);
+			tst_res(TPASS, "response=%x id=%d", resp.response, resp.fd);
 		}
 
 		i += event->event_len;
@@ -513,6 +518,7 @@ static struct tst_test test = {
 	.timeout = 1,
 	.test = test_fanotify,
 	.tcnt = ARRAY_SIZE(tcases),
+	.test_variants = 2,
 	.setup = setup,
 	.cleanup = cleanup,
 	.forks_child = 1,

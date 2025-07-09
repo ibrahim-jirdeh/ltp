@@ -35,7 +35,9 @@
 #ifndef FAN_REPORT_FD_ERROR
 #define FAN_REPORT_FD_ERROR	0x00002000
 #endif
-
+#ifndef FAN_REPORT_RESPONSE_ID
+#define FAN_REPORT_RESPONSE_ID	0x00008000
+#endif
 
 /* Non-uapi convenience macros */
 #ifndef FAN_REPORT_DFID_NAME_FID
