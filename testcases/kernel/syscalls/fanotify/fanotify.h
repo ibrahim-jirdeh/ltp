@@ -60,11 +60,30 @@ static inline int safe_fanotify_mark(const char *file, const int lineno,
 	return rval;
 }
 
+static inline int safe_fanotify_open_queue_fd(const char *file, const int lineno,
+			int fd)
+{
+	int rval;
+
+	rval = ioctl(fd, FAN_IOC_OPEN_QUEUE_FD);
+
+	if (rval < 0) {
+		tst_brk_(file, lineno, TBROK | TERRNO,
+			 "invalid fanotify_open_queue_fd() return %d", rval);
+	}
+
+
+	return rval;
+}
+
 #define SAFE_FANOTIFY_MARK(fd, flags, mask, dfd, pathname)  \
 	safe_fanotify_mark(__FILE__, __LINE__, (fd), (flags), (mask), (dfd), (pathname))
 
 #define SAFE_FANOTIFY_INIT(fan, mode)  \
 	safe_fanotify_init(__FILE__, __LINE__, (fan), (mode))
+
+#define SAFE_FANOTIFY_OPEN_QUEUE(fd)  \
+	safe_fanotify_open_queue_fd(__FILE__, __LINE__, (fd))
 
 #ifdef HAVE_NAME_TO_HANDLE_AT
 
