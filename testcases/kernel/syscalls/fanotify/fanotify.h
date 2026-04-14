@@ -60,11 +60,30 @@ static inline int safe_fanotify_mark(const char *file, const int lineno,
 	return rval;
 }
 
+static inline int safe_fanotify_open_queue_fd(const char *file, const int lineno,
+			int fd)
+{
+	int rval;
+
+	rval = ioctl(fd, FAN_IOC_OPEN_QUEUE_FD);
+
+	if (rval < 0) {
+		tst_brk_(file, lineno, TBROK | TERRNO,
+			 "invalid fanotify_open_queue_fd() return %d", rval);
+	}
+
+
+	return rval;
+}
+
 #define SAFE_FANOTIFY_MARK(fd, flags, mask, dfd, pathname)  \
 	safe_fanotify_mark(__FILE__, __LINE__, (fd), (flags), (mask), (dfd), (pathname))
 
 #define SAFE_FANOTIFY_INIT(fan, mode)  \
 	safe_fanotify_init(__FILE__, __LINE__, (fan), (mode))
+
+#define SAFE_FANOTIFY_OPEN_QUEUE(fd)  \
+	safe_fanotify_open_queue_fd(__FILE__, __LINE__, (fd))
 
 #ifdef HAVE_NAME_TO_HANDLE_AT
 
@@ -283,6 +302,17 @@ static inline void fanotify_flags_err_msg(const char *flags_str,
 #define REQUIRE_FANOTIFY_INIT_FLAGS_SUPPORTED_ON_FS(flags, fname) \
 	fanotify_flags_err_msg(#flags, __FILE__, __LINE__, tst_brk_, \
 		fanotify_init_flags_supported_on_fs(flags, fname))
+
+static inline int fanotify_init_flags_supported_on_fs_perm(unsigned int flags,
+							   const char *fname)
+{
+	return fanotify_flags_supported_on_fs(flags, FAN_MARK_INODE,
+					      FAN_OPEN_PERM, fname);
+}
+
+#define REQUIRE_FANOTIFY_INIT_FLAGS_SUPPORTED_ON_FS_PERM(flags, fname) \
+	fanotify_flags_err_msg(#flags, __FILE__, __LINE__, tst_brk_, \
+		fanotify_init_flags_supported_on_fs_perm(flags, fname))
 
 static inline int fanotify_handle_supported_by_kernel(int flag)
 {

@@ -36,6 +36,9 @@
 #define FAN_REPORT_FD_ERROR	0x00002000
 #endif
 
+#ifndef FAN_RESTARTABLE_EVENTS
+#define FAN_RESTARTABLE_EVENTS	0x00010000
+#endif
 
 /* Non-uapi convenience macros */
 #ifndef FAN_REPORT_DFID_NAME_FID
@@ -136,6 +139,10 @@
 
 /* Flags required for unprivileged user group */
 #define FANOTIFY_REQUIRED_USER_INIT_FLAGS    (FAN_REPORT_FID)
+
+#ifndef FAN_IOC_OPEN_QUEUE_FD
+#define FAN_IOC_OPEN_QUEUE_FD _IO('F', 0xF0)
+#endif
 
 /*
  * FAN_ALL_PERM_EVENTS has been deprecated, so any new permission events
